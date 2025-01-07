@@ -8,6 +8,11 @@ jobs:
         node: ['14', '16']
     steps:
       - uses: actions/checkout@v2
+      - name: Append to npmrc
+        run: |
+          echo "//npm.pkg.github.com/:_authToken=$PACKAGES_UPLOAD_PAT" >> .npmrc
+        env:
+          PACKAGES_UPLOAD_PAT: ${{ secrets.PACKAGES_UPLOAD_PAT }}
       - name: Setup node ${{ matrix.node }}
         uses: actions/setup-node@v1
         with:
