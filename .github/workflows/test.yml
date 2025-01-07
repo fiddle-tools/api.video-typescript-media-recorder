@@ -16,6 +16,7 @@ jobs:
       - name: Setup node ${{ matrix.node }}
         uses: actions/setup-node@v1
         with:
+          registry-url: https://npm.pkg.github.com
           node-version: ${{ matrix.node }}
       - run: npm install --no-save
       - run: npm test
