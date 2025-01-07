@@ -1,10 +1,10 @@
 {
-  "name": "@api.video/media-recorder",
+  "name": "@fiddle-tools/media-recorder",
   "version": "1.0.11",
   "description": "api.video media recorder - upload video from your webcam with ease",
   "repository": {
     "type": "git",
-    "url": "git@github.com:apivideo/api.video-typescript-media-recorder.git"
+    "url": "git@github.com:fiddle-tools/api.video-typescript-media-recorder.git"
   },
   "author": "api.video <ecosystem@api.video> (https://api.video/)",
   "license": "MIT",
