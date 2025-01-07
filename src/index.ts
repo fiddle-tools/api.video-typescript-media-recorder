@@ -3,15 +3,15 @@ import {
   ProgressiveUploaderOptionsWithAccessToken,
   ProgressiveUploaderOptionsWithUploadToken,
   VideoUploadResponse,
-} from "@api.video/video-uploader";
-import { VideoUploadError } from "@api.video/video-uploader/dist/src/abstract-uploader";
+} from "@fiddle-tools/video-uploader";
+import { VideoUploadError } from "@fiddle-tools/video-uploader/dist/src/abstract-uploader";
 
 export {
   ProgressiveUploaderOptionsWithAccessToken,
   ProgressiveUploaderOptionsWithUploadToken,
   VideoUploadResponse,
-} from "@api.video/video-uploader";
-export { VideoUploadError } from "@api.video/video-uploader/dist/src/abstract-uploader";
+} from "@fiddle-tools/video-uploader";
+export { VideoUploadError } from "@fiddle-tools/video-uploader/dist/src/abstract-uploader";
 
 export interface Options {
   onError?: (error: VideoUploadError) => void;
