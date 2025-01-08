@@ -32,6 +32,7 @@ type EventType = "error" | "recordingStopped" | "videoPlayable";
 export class ApiVideoMediaRecorder {
   private mediaRecorder: MediaRecorder;
   private streamUpload: ProgressiveUploader;
+  private testlifyUploader: ProgressiveUploader | null;
   private onVideoAvailable?: (video: VideoUploadResponse) => void;
   private onStopError?: (error: VideoUploadError) => void;
   private eventTarget: EventTarget;
@@ -46,7 +47,8 @@ export class ApiVideoMediaRecorder {
       (
         | ProgressiveUploaderOptionsWithUploadToken
         | ProgressiveUploaderOptionsWithAccessToken
-      )
+      ),
+      testlifyStorageSignedUrl: string | null = null,
   ) {
     this.eventTarget = new EventTarget();
     this.generateFileOnStop = options.generateFileOnStop || false;
@@ -84,11 +86,21 @@ export class ApiVideoMediaRecorder {
       },
     });
 
+    if (testlifyStorageSignedUrl) {
+    this.testlifyUploader = new ProgressiveUploader({
+      ...options,
+      testlifyStorageSignedUrl: testlifyStorageSignedUrl,
+    })
+  } else {
+    this.testlifyUploader = null;
+  }
+
     this.mediaRecorder.ondataavailable = (e) => this.onDataAvailable(e);
 
     this.mediaRecorder.onstop = async () => {
       if (this.previousPart) {
         const video = await this.streamUpload.uploadLastPart(this.previousPart);
+        const testlifyVideo = await this.testlifyUploader?.uploadLastPart(this.previousPart);
         if (this.onVideoAvailable) {
           this.onVideoAvailable(video);
         }
@@ -116,6 +128,26 @@ export class ApiVideoMediaRecorder {
     this.eventTarget.addEventListener(type, callback, options);
   }
 
+  private async handleDefaultUpload(chunk: Blob, isLast: boolean) {
+    try {
+      await this.streamUpload.uploadPart(chunk);
+    } catch (error) {
+      if (!isLast) this.mediaRecorder.stop();
+      this.dispatch("error", error);
+      if (this.onStopError) this.onStopError(error as VideoUploadError);
+  }
+}
+
+  private async handleTestlifyUpload(chunk: Blob, isLast: boolean) {
+    try {
+      await this.testlifyUploader?.uploadPart(chunk);
+    } catch (error) {
+      if (!isLast) this.mediaRecorder.stop();
+      this.dispatch("error", error);
+      if (this.onStopError) this.onStopError(error as VideoUploadError);
+    }
+  }
+
   private async onDataAvailable(ev: BlobEvent) {
     const isLast = (ev as any).currentTarget.state === "inactive";
     try {
@@ -125,7 +157,8 @@ export class ApiVideoMediaRecorder {
       if (this.previousPart) {
         const toUpload = new Blob([this.previousPart]);
         this.previousPart = ev.data;
-        await this.streamUpload.uploadPart(toUpload);
+        await this.handleDefaultUpload(toUpload, isLast);
+        await this.handleTestlifyUpload(toUpload, isLast);
       } else {
         this.previousPart = ev.data;
       }

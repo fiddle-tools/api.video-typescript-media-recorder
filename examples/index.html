@@ -22,7 +22,7 @@
 <body>
     <div id="container">
         <div>
-            <video id="video"></video>
+            <video id="video" muted></video>
         </div>
         <div>
             <button id="start" disabled>start recording</button>
@@ -58,7 +58,7 @@
             recorder = new ApiVideoMediaRecorder(stream, {
                 uploadToken: "UPLOAD_TOKEN",
                 videoName: videoName
-            });
+            },'http://localhost:8000/upload');
 
             recorder.addEventListener("videoPlayable", (e) => console.log("Video playable,", e));
             
