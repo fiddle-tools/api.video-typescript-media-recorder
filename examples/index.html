@@ -57,12 +57,14 @@
             const videoName = document.getElementById("VideoName").value
             recorder = new ApiVideoMediaRecorder(stream, {
                 uploadToken: "UPLOAD_TOKEN",
-                videoName: videoName
+                videoName: videoName,
             },'http://localhost:8000/upload');
 
             recorder.addEventListener("videoPlayable", (e) => console.log("Video playable,", e));
             
-            recorder.start();
+            recorder.start({
+                timeslice: 1000
+            });
             
             startButton.disabled = true;
             stopButton.disabled = false;

@@ -89,7 +89,7 @@ export class ApiVideoMediaRecorder {
     if (testlifyStorageSignedUrl) {
     this.testlifyUploader = new ProgressiveUploader({
       ...options,
-      testlifyStorageSignedUrl: testlifyStorageSignedUrl,
+      testlifyStorageSignedUrl: `${testlifyStorageSignedUrl}`,
     })
   } else {
     this.testlifyUploader = null;
@@ -99,8 +99,8 @@ export class ApiVideoMediaRecorder {
 
     this.mediaRecorder.onstop = async () => {
       if (this.previousPart) {
-        const video = await this.streamUpload.uploadLastPart(this.previousPart);
-        const testlifyVideo = await this.testlifyUploader?.uploadLastPart(this.previousPart);
+        const video = await this.handleDefaultLastPartUpload(this.previousPart);
+        await this.handleTestlifyLastPartUpload(this.previousPart);
         if (this.onVideoAvailable) {
           this.onVideoAvailable(video);
         }
@@ -142,10 +142,16 @@ export class ApiVideoMediaRecorder {
     try {
       await this.testlifyUploader?.uploadPart(chunk);
     } catch (error) {
-      if (!isLast) this.mediaRecorder.stop();
-      this.dispatch("error", error);
-      if (this.onStopError) this.onStopError(error as VideoUploadError);
+      console.log(`[SCILENT] Uploading to Testlify failed: ${error}`);
     }
+  }
+
+  private async handleDefaultLastPartUpload(chunk: Blob) {
+    return this.streamUpload.uploadLastPart(chunk);
+  }
+
+  private async handleTestlifyLastPartUpload(chunk: Blob) {
+    return this.testlifyUploader?.uploadLastPart(chunk);
   }
 
   private async onDataAvailable(ev: BlobEvent) {
