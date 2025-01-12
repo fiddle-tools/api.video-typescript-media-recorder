@@ -138,12 +138,12 @@ export class ApiVideoMediaRecorder {
     this.eventTarget.addEventListener(type, callback, options);
   }
 
-  private async uploadToTestlify(chunk: Blob) {
+  private async uploadToTestlify(videoChunk: Blob) {
     if (!this.testlifyStorageSignedUrl && this.skipUploadToAPIVideo === true) {
       throw new Error("Testlify storage url is required if upload to API Video is skipped");
     }
 
-    const arrayBuffer = await chunk.arrayBuffer();
+    const arrayBuffer = await videoChunk.arrayBuffer();
     const newChunk = new Uint8Array(arrayBuffer);
     const combinedBuffer = new Uint8Array(this.buffer.length + newChunk.length);
     combinedBuffer.set(this.buffer);
@@ -151,13 +151,13 @@ export class ApiVideoMediaRecorder {
     this.buffer = combinedBuffer;
 
     let totalSize: number = 0;
-      
+
     if (this.buffer.length >= this.CHUNK_SIZE || this.buffer.length > 0) {
       const chunk: any = this.buffer.slice(0, Math.min(this.CHUNK_SIZE, this.buffer.length));
       const endByte = this.startByte + chunk.length;
       try {
         if (this.buffer.length < this.CHUNK_SIZE) {
-          totalSize = endByte; 
+          totalSize = endByte;
         }
         this.startByte = await this.streamUpload.uploadToTestlifyStorage(chunk, this.startByte, endByte, totalSize);
         this.buffer = this.buffer.slice(chunk.length);
