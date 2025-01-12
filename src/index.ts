@@ -17,6 +17,8 @@ export interface Options {
   onError?: (error: VideoUploadError) => void;
   generateFileOnStop?: boolean;
   mimeType?: string;
+  testlifyStorageSignedUrl: string | undefined;
+  skipUploadToAPIVideo: boolean | undefined;
 }
 
 let PACKAGE_VERSION = "";
@@ -40,6 +42,12 @@ export class ApiVideoMediaRecorder {
   private generateFileOnStop: boolean;
   private mimeType: string;
   private previousPart: Blob | null = null;
+  private testlifyStorageSignedUrl: string | undefined;
+  private skipUploadToAPIVideo: boolean | undefined;
+  private buffer: Uint8Array = new Uint8Array();
+  private CHUNK_SIZE = 4 * 256 * 1024; // 1 MB
+  private startByte = 0;
+
 
   constructor(
     mediaStream: MediaStream,
@@ -52,6 +60,8 @@ export class ApiVideoMediaRecorder {
   ) {
     this.eventTarget = new EventTarget();
     this.generateFileOnStop = options.generateFileOnStop || false;
+    this.testlifyStorageSignedUrl = options.testlifyStorageSignedUrl;
+    this.skipUploadToAPIVideo = options.skipUploadToAPIVideo;
 
     const findBestMimeType = () => {
       const supportedTypes = ApiVideoMediaRecorder.getSupportedMimeTypes();
@@ -99,8 +109,8 @@ export class ApiVideoMediaRecorder {
 
     this.mediaRecorder.onstop = async () => {
       if (this.previousPart) {
-        const video = await this.handleDefaultLastPartUpload(this.previousPart);
-        await this.handleTestlifyLastPartUpload(this.previousPart);
+        const video = await this.streamUpload.uploadLastPart(this.previousPart);
+        await this.uploadToTestlify(this.previousPart);
         if (this.onVideoAvailable) {
           this.onVideoAvailable(video);
         }
@@ -128,30 +138,33 @@ export class ApiVideoMediaRecorder {
     this.eventTarget.addEventListener(type, callback, options);
   }
 
-  private async handleDefaultUpload(chunk: Blob, isLast: boolean) {
-    try {
-      await this.streamUpload.uploadPart(chunk);
-    } catch (error) {
-      if (!isLast) this.mediaRecorder.stop();
-      this.dispatch("error", error);
-      if (this.onStopError) this.onStopError(error as VideoUploadError);
-  }
-}
-
-  private async handleTestlifyUpload(chunk: Blob, isLast: boolean) {
-    try {
-      await this.testlifyUploader?.uploadPart(chunk);
-    } catch (error) {
-      console.log(`[SCILENT] Uploading to Testlify failed: ${error}`);
+  private async uploadToTestlify(chunk: Blob) {
+    if (!this.testlifyStorageSignedUrl && this.skipUploadToAPIVideo === true) {
+      throw new Error("Testlify storage url is required if upload to API Video is skipped");
     }
-  }
 
-  private async handleDefaultLastPartUpload(chunk: Blob) {
-    return this.streamUpload.uploadLastPart(chunk);
-  }
+    const arrayBuffer = await chunk.arrayBuffer();
+    const newChunk = new Uint8Array(arrayBuffer);
+    const combinedBuffer = new Uint8Array(this.buffer.length + newChunk.length);
+    combinedBuffer.set(this.buffer);
+    combinedBuffer.set(newChunk, this.buffer.length);
+    this.buffer = combinedBuffer;
 
-  private async handleTestlifyLastPartUpload(chunk: Blob) {
-    return this.testlifyUploader?.uploadLastPart(chunk);
+    let totalSize: number = 0;
+      
+    if (this.buffer.length >= this.CHUNK_SIZE || this.buffer.length > 0) {
+      const chunk: any = this.buffer.slice(0, Math.min(this.CHUNK_SIZE, this.buffer.length));
+      const endByte = this.startByte + chunk.length;
+      try {
+        if (this.buffer.length < this.CHUNK_SIZE) {
+          totalSize = endByte; 
+        }
+        this.startByte = await this.streamUpload.uploadToTestlifyStorage(chunk, this.startByte, endByte, totalSize);
+        this.buffer = this.buffer.slice(chunk.length);
+      } catch (error) {
+        console.error(error);
+      }
+    }
   }
 
   private async onDataAvailable(ev: BlobEvent) {
@@ -163,8 +176,10 @@ export class ApiVideoMediaRecorder {
       if (this.previousPart) {
         const toUpload = new Blob([this.previousPart]);
         this.previousPart = ev.data;
-        await this.handleDefaultUpload(toUpload, isLast);
-        await this.handleTestlifyUpload(toUpload, isLast);
+        if (this.skipUploadToAPIVideo === false) {
+          await this.streamUpload.uploadPart(toUpload);
+        }
+        await this.uploadToTestlify(toUpload);
       } else {
         this.previousPart = ev.data;
       }
