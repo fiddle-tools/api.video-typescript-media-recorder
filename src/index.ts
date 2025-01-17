@@ -170,42 +170,61 @@ export class ApiVideoMediaRecorder {
   //   }
   // }
 
-  private async uploadChunk(chunk: Blob, startByte: number, endByte: number, totalSize: number | string): Promise<number> {
+  private async uploadChunk(chunk: Blob, startByte: number, endByte: number, totalSize: number | string): Promise<{ status: number, response: VideoUploadResponse | null }> {
     if (!this.testlifyStorageSignedUrl) {
-      throw new Error("Testlify storage url is required if upload to API Video is skipped");
+      throw new Error("Testlify storage URL is required if upload to API Video is skipped");
     }
+
     const headers = {
       'Content-Length': chunk.size.toString(),
       'Content-Range': `bytes ${startByte}-${endByte - 1}/${totalSize}`,
     };
-    const response = await fetch(this.testlifyStorageSignedUrl, {
-      method: 'PUT',
-      headers,
-      body: chunk,
-    });
 
-    if (response.ok || response.status === 308) {
-      console.log(`Chunk uploaded successfully: bytes ${startByte}-${endByte - 1}`);
-      return endByte;
-    } else {
-      const errorMsg = await response.text();
-      console.error(`Upload failed: ${response.status} - ${errorMsg}`);
-      throw new Error(`Upload failed: ${response.status}`);
+    try {
+      const response = await fetch(this.testlifyStorageSignedUrl, {
+        method: 'PUT',
+        headers,
+        body: chunk,
+      });
+
+      if (response.ok) {
+        console.log(`Chunk uploaded successfully: bytes ${startByte}-${endByte - 1}`);
+        const videoUploadResponse: VideoUploadResponse = await response.json();
+        return { status: 200, response: videoUploadResponse };
+      } else if (response.status === 308) {
+        console.log(`Chunk accepted for upload (status 308): bytes ${startByte}-${endByte - 1}`);
+        return { status: 308, response: null };
+      } else {
+        const errorMsg = await response.text();
+        console.error(`Upload failed: ${response.status} - ${errorMsg}`);
+        throw new Error(`Upload failed: ${response.status}`);
+      }
+    } catch (error) {
+      console.error(`Upload failed with error: ${error}`);
+      throw error;
     }
   }
 
   private async handleUploads() {
     let totalSize: number | string = '*';
+    let lastSuccessfulUpload: VideoUploadResponse | null = null;
+
     while (this.isRecording || this.buffer.length > 0) {
       if (this.buffer.length >= this.CHUNK_SIZE || (!this.isRecording && this.buffer.length > 0)) {
         const chunk = this.buffer.slice(0, Math.min(this.CHUNK_SIZE, this.buffer.length));
         const endByte = this.startByte + chunk.length;
+
         try {
           if (this.buffer.length < this.CHUNK_SIZE && !this.isRecording) {
-            totalSize = endByte
+            totalSize = endByte;
           }
-          this.startByte = await this.uploadChunk(new Blob([chunk], { type: 'video/webm' }), this.startByte, endByte, totalSize);
+          const { status, response } = await this.uploadChunk(new Blob([chunk], { type: 'video/webm' }), this.startByte, endByte, totalSize);
+          if (status === 200 && response) {
+            lastSuccessfulUpload = response;
+          }
+          this.startByte = endByte;
           this.buffer = this.buffer.slice(chunk.length);
+
         } catch (error) {
           console.error(error);
           break;
@@ -214,8 +233,23 @@ export class ApiVideoMediaRecorder {
         await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
-  }
 
+    if (lastSuccessfulUpload) {
+      if (this.onVideoAvailable) {
+        this.onVideoAvailable(lastSuccessfulUpload);
+      }
+      this.isRecording = false;
+    } else {
+      console.error('No valid video upload response found.');
+      if (this.onStopError) {
+        const error: VideoUploadError = {
+          raw: "No video upload response was successful.",
+          title: "Upload Error",
+        };
+        this.onStopError(error);
+      }
+    }
+  }
 
   private async onDataAvailable(ev: BlobEvent) {
     const isLast = (ev as any).currentTarget.state === "inactive";
