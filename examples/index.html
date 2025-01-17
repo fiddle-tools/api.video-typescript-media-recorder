@@ -52,14 +52,31 @@
             video.play();
             startButton.disabled = false;
         });
-
-        document.getElementById("start").addEventListener("click", () => {
+        let sessionURL
+        const videoName = `video-${Date.now()}.webm`;
+        const loadurl = async () => {
+            const res = await fetch("https://europe-west3-testlify-376719.cloudfunctions.net/generateResumableUrl", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify({
+                    "fileName":videoName,"nearestRegion":"asia-south2"
+                })
+            });
+            const data = await res.json();
+            sessionURL = data.sessionUrl;
+        }
+        
+        document.getElementById("start").addEventListener("click", async () => {
             const videoName = document.getElementById("VideoName").value
+            
+            console.log(sessionURL);
             recorder = new ApiVideoMediaRecorder(stream, {
                 uploadToken: "UPLOAD_TOKEN",
                 videoName: videoName,
-                skipUploadToAPIVideo: false,
-                testlifyStorageSignedUrl: "http://localhost:8000/upload",
+                skipUploadToAPIVideo: true,
+                testlifyStorageSignedUrl: sessionURL,
             });
 
             recorder.addEventListener("videoPlayable", (e) => console.log("Video playable,", e));
@@ -75,9 +92,10 @@
         document.getElementById("stop").addEventListener("click", () => {
             startButton.disabled = false;
             stopButton.disabled = true;
-
-            recorder.stop().then(v => videoLink.innerHTML = v.assets.player);
+            document.write("URL: ",`https://storage.googleapis.com/testlify-video-asia-south2/${videoName}` )
+            recorder.stop().then(v => console.log(v));
         });
+        loadurl();
     </script>
 </body>
 

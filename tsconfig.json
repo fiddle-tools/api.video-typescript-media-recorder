@@ -7,6 +7,7 @@
         "skipLibCheck": true,
         "forceConsistentCasingInFileNames": true,
         "declaration": true,
-        "rootDirs": ["./src", "./test"]
+        "rootDirs": ["./src", "./test"],
+        "sourceMap": true
     }
 }

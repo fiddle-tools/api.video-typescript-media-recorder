@@ -21,6 +21,7 @@ module.exports = {
         filename: 'index.js',
         globalObject: 'this'
     },
+    devtool: 'source-map', // Add this line to generate source maps
     plugins: [
         new webpack.DefinePlugin({
             __PACKAGE_VERSION__: JSON.stringify(require('./package.json').version),

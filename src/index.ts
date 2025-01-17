@@ -47,7 +47,7 @@ export class ApiVideoMediaRecorder {
   private buffer: Uint8Array = new Uint8Array();
   private CHUNK_SIZE = 4 * 256 * 1024; // 1 MB
   private startByte = 0;
-
+  private isRecording = false;
 
   constructor(
     mediaStream: MediaStream,
@@ -56,7 +56,7 @@ export class ApiVideoMediaRecorder {
         | ProgressiveUploaderOptionsWithUploadToken
         | ProgressiveUploaderOptionsWithAccessToken
       ),
-      testlifyStorageSignedUrl: string | null = null,
+    testlifyStorageSignedUrl: string | null = null,
   ) {
     this.eventTarget = new EventTarget();
     this.generateFileOnStop = options.generateFileOnStop || false;
@@ -97,22 +97,23 @@ export class ApiVideoMediaRecorder {
     });
 
     if (testlifyStorageSignedUrl) {
-    this.testlifyUploader = new ProgressiveUploader({
-      ...options,
-      testlifyStorageSignedUrl: `${testlifyStorageSignedUrl}`,
-    })
-  } else {
-    this.testlifyUploader = null;
-  }
+      this.testlifyUploader = new ProgressiveUploader({
+        ...options,
+        testlifyStorageSignedUrl: `${testlifyStorageSignedUrl}`,
+      })
+    } else {
+      this.testlifyUploader = null;
+    }
 
     this.mediaRecorder.ondataavailable = (e) => this.onDataAvailable(e);
 
     this.mediaRecorder.onstop = async () => {
       if (this.previousPart) {
-        const video = await this.streamUpload.uploadLastPart(this.previousPart);
-        await this.uploadToTestlify(this.previousPart);
-        if (this.onVideoAvailable) {
-          this.onVideoAvailable(video);
+        if (!this.skipUploadToAPIVideo) {
+          const video = await this.streamUpload.uploadLastPart(this.previousPart);
+          if (this.onVideoAvailable) {
+            this.onVideoAvailable(video);
+          }
         }
       } else if (this.onStopError) {
         const error: VideoUploadError = {
@@ -121,6 +122,8 @@ export class ApiVideoMediaRecorder {
         };
         this.onStopError(error);
       }
+      this.isRecording = false;
+      // await this.uploadToTestlify();
     };
     (window as any).mediaRecorder = this.mediaRecorder;
   }
@@ -138,38 +141,96 @@ export class ApiVideoMediaRecorder {
     this.eventTarget.addEventListener(type, callback, options);
   }
 
-  private async uploadToTestlify(videoChunk: Blob) {
-    if (!this.testlifyStorageSignedUrl && this.skipUploadToAPIVideo === true) {
+  // private async uploadToTestlify() {
+  //   if (!this.testlifyStorageSignedUrl && this.skipUploadToAPIVideo === true) {
+  //     throw new Error("Testlify storage url is required if upload to API Video is skipped");
+  //   }
+
+  //   const totalSize: any = '*';
+  //   while (this.buffer.length >= this.CHUNK_SIZE) {
+  //     const chunk: any = this.buffer.slice(0, Math.min(this.CHUNK_SIZE, this.buffer.length));
+  //     const endByte = this.startByte + chunk.length;
+  //     try {
+  //       this.startByte = await this.streamUpload.uploadToTestlifyStorage(chunk, this.startByte, endByte, totalSize);
+  //       this.buffer = this.buffer.slice(chunk.length);
+  //     } catch (error) {
+  //       console.error(error);
+  //       break;
+  //     }
+  //   }
+  //   // last chunk when recording is stopped
+  //   if (!this.isRecording && this.buffer.length > 0) {
+  //     const endByte = this.startByte + this.buffer.length;
+  //     try {
+  //       const chunk: any = this.buffer.slice(0, this.buffer.length);
+  //       this.startByte = await this.streamUpload.uploadToTestlifyStorage(chunk, this.startByte, endByte, endByte);
+  //     } catch (error) {
+  //       console.error(error);
+  //     }
+  //   }
+  // }
+
+  private async uploadChunk(chunk: Blob, startByte: number, endByte: number, totalSize: number | string): Promise<number> {
+    if (!this.testlifyStorageSignedUrl) {
       throw new Error("Testlify storage url is required if upload to API Video is skipped");
     }
+    const headers = {
+      'Content-Length': chunk.size.toString(),
+      'Content-Range': `bytes ${startByte}-${endByte - 1}/${totalSize}`,
+    };
+    const response = await fetch(this.testlifyStorageSignedUrl, {
+      method: 'PUT',
+      headers,
+      body: chunk,
+    });
 
-    const arrayBuffer = await videoChunk.arrayBuffer();
-    const newChunk = new Uint8Array(arrayBuffer);
-    const combinedBuffer = new Uint8Array(this.buffer.length + newChunk.length);
-    combinedBuffer.set(this.buffer);
-    combinedBuffer.set(newChunk, this.buffer.length);
-    this.buffer = combinedBuffer;
+    if (response.ok || response.status === 308) {
+      console.log(`Chunk uploaded successfully: bytes ${startByte}-${endByte - 1}`);
+      return endByte;
+    } else {
+      const errorMsg = await response.text();
+      console.error(`Upload failed: ${response.status} - ${errorMsg}`);
+      throw new Error(`Upload failed: ${response.status}`);
+    }
+  }
 
-    let totalSize: number = 0;
-
-    if (this.buffer.length >= this.CHUNK_SIZE || this.buffer.length > 0) {
-      const chunk: any = this.buffer.slice(0, Math.min(this.CHUNK_SIZE, this.buffer.length));
-      const endByte = this.startByte + chunk.length;
-      try {
-        if (this.buffer.length < this.CHUNK_SIZE) {
-          totalSize = endByte;
+  private async handleUploads() {
+    let totalSize: number | string = '*';
+    while (this.isRecording || this.buffer.length > 0) {
+      if (this.buffer.length >= this.CHUNK_SIZE || (!this.isRecording && this.buffer.length > 0)) {
+        const chunk = this.buffer.slice(0, Math.min(this.CHUNK_SIZE, this.buffer.length));
+        const endByte = this.startByte + chunk.length;
+        try {
+          if (this.buffer.length < this.CHUNK_SIZE && !this.isRecording) {
+            totalSize = endByte
+          }
+          this.startByte = await this.uploadChunk(new Blob([chunk], { type: 'video/webm' }), this.startByte, endByte, totalSize);
+          this.buffer = this.buffer.slice(chunk.length);
+        } catch (error) {
+          console.error(error);
+          break;
         }
-        this.startByte = await this.streamUpload.uploadToTestlifyStorage(chunk, this.startByte, endByte, totalSize);
-        this.buffer = this.buffer.slice(chunk.length);
-      } catch (error) {
-        console.error(error);
+      } else {
+        await new Promise(resolve => setTimeout(resolve, 1000));
       }
     }
   }
 
+
   private async onDataAvailable(ev: BlobEvent) {
     const isLast = (ev as any).currentTarget.state === "inactive";
     try {
+      if (this.skipUploadToAPIVideo) {
+        if (ev.data.size > 0) {
+          const arrayBuffer = await ev.data.arrayBuffer();
+          const newChunk = new Uint8Array(arrayBuffer);
+          const combinedBuffer = new Uint8Array(this.buffer.length + newChunk.length);
+          combinedBuffer.set(this.buffer);
+          combinedBuffer.set(newChunk, this.buffer.length);
+          this.buffer = combinedBuffer;
+          // await this.uploadToTestlify();
+        }
+      }
       if (this.generateFileOnStop) {
         this.debugChunks.push(ev.data);
       }
@@ -179,7 +240,6 @@ export class ApiVideoMediaRecorder {
         if (this.skipUploadToAPIVideo === false) {
           await this.streamUpload.uploadPart(toUpload);
         }
-        await this.uploadToTestlify(toUpload);
       } else {
         this.previousPart = ev.data;
       }
@@ -200,6 +260,10 @@ export class ApiVideoMediaRecorder {
     if (this.getMediaRecorderState() === "recording") {
       throw new Error("MediaRecorder is already recording");
     }
+    this.isRecording = true;
+    if (this.skipUploadToAPIVideo) {
+      this.handleUploads()
+    }
     this.mediaRecorder.start(options?.timeslice || 5000);
   }
 
@@ -208,10 +272,12 @@ export class ApiVideoMediaRecorder {
   }
 
   public stop(): Promise<VideoUploadResponse> {
+
     return new Promise((resolve, reject) => {
       if (this.getMediaRecorderState() === "inactive") {
         reject(new Error("MediaRecorder is already inactive"));
       }
+      this.isRecording = false;
       this.mediaRecorder.stop();
       this.onVideoAvailable = (v) => resolve(v);
       this.onStopError = (e) => reject(e);
