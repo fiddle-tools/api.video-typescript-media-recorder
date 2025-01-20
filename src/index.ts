@@ -37,6 +37,7 @@ export class ApiVideoMediaRecorder {
   private testlifyUploader: ProgressiveUploader | null;
   private onVideoAvailable?: (video: VideoUploadResponse) => void;
   private onStopError?: (error: VideoUploadError) => void;
+  private onCustomUploadStopError?: (error: VideoUploadError) => void;
   private eventTarget: EventTarget;
   private debugChunks: Blob[] = [];
   private generateFileOnStop: boolean;
@@ -141,35 +142,6 @@ export class ApiVideoMediaRecorder {
     this.eventTarget.addEventListener(type, callback, options);
   }
 
-  // private async uploadToTestlify() {
-  //   if (!this.testlifyStorageSignedUrl && this.skipUploadToAPIVideo === true) {
-  //     throw new Error("Testlify storage url is required if upload to API Video is skipped");
-  //   }
-
-  //   const totalSize: any = '*';
-  //   while (this.buffer.length >= this.CHUNK_SIZE) {
-  //     const chunk: any = this.buffer.slice(0, Math.min(this.CHUNK_SIZE, this.buffer.length));
-  //     const endByte = this.startByte + chunk.length;
-  //     try {
-  //       this.startByte = await this.streamUpload.uploadToTestlifyStorage(chunk, this.startByte, endByte, totalSize);
-  //       this.buffer = this.buffer.slice(chunk.length);
-  //     } catch (error) {
-  //       console.error(error);
-  //       break;
-  //     }
-  //   }
-  //   // last chunk when recording is stopped
-  //   if (!this.isRecording && this.buffer.length > 0) {
-  //     const endByte = this.startByte + this.buffer.length;
-  //     try {
-  //       const chunk: any = this.buffer.slice(0, this.buffer.length);
-  //       this.startByte = await this.streamUpload.uploadToTestlifyStorage(chunk, this.startByte, endByte, endByte);
-  //     } catch (error) {
-  //       console.error(error);
-  //     }
-  //   }
-  // }
-
   private async uploadChunk(chunk: Blob, startByte: number, endByte: number, totalSize: number | string): Promise<{ status: number, response: VideoUploadResponse | null }> {
     if (!this.testlifyStorageSignedUrl) {
       throw new Error("Testlify storage URL is required if upload to API Video is skipped");
@@ -241,12 +213,12 @@ export class ApiVideoMediaRecorder {
       this.isRecording = false;
     } else {
       console.error('No valid video upload response found.');
-      if (this.onStopError) {
+      if (this.onCustomUploadStopError) {
         const error: VideoUploadError = {
           raw: "No video upload response was successful.",
           title: "Upload Error",
         };
-        this.onStopError(error);
+        this.onCustomUploadStopError(error);
       }
     }
   }
@@ -314,7 +286,10 @@ export class ApiVideoMediaRecorder {
       this.isRecording = false;
       this.mediaRecorder.stop();
       this.onVideoAvailable = (v) => resolve(v);
-      this.onStopError = (e) => reject(e);
+      if (!this.skipUploadToAPIVideo) {
+        this.onStopError = (e) => reject(e)
+      }
+      this.onCustomUploadStopError = (e) => reject(e)
     });
   }
 
