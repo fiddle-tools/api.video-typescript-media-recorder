@@ -8,11 +8,13 @@
             flex-direction: column;
             align-items: center;
         }
+
         #video {
             width: 640;
             height: 480;
             border: 1px solid gray;
         }
+
         #container div {
             margin: 10px 0;
         }
@@ -25,77 +27,136 @@
             <video id="video" muted></video>
         </div>
         <div>
-            <button id="start" disabled>start recording</button>
-            <button id="stop" disabled>stop recording</button>
-            <input type="text" id="VideoName" />
+            <button id="start-screen" disabled>Start Screen Recording</button>
+            <button id="stop-screen" disabled>Stop Screen Recording</button>
         </div>
         <div>
-            <p>Video link: <span id="video-link"><i>will be displayed when the recording is finished</i></span></p>
+            <button id="start-video" disabled>Start Video Recording</button>
+            <button id="pause-video" disabled>Pause Video Recording</button>
+            <button id="resume-video" disabled>Resume Video Recording</button>
+            <button id="stop-video" disabled>Stop Video Recording</button>
+            <input type="text" id="VideoName" placeholder="Enter video name" />
+        </div>
+        <div>
+            <p>Video Link: <span id="video-link"><i>will be displayed when finished</i></span></p>
+            <p>Screen Recording Link: <span id="screen-link"><i>will be displayed when finished</i></span></p>
         </div>
     </div>
-    
-    <script> 
-        const video = document.querySelector('#video');
-        const startButton = document.getElementById("start");
-        const stopButton = document.getElementById("stop");
-        const videoLink = document.getElementById("video-link");
-        let stream, recorder;
 
-        var constraints = window.constraints = {
+    <script>
+        const video = document.querySelector('#video');
+        const startScreenButton = document.getElementById("start-screen");
+        const stopScreenButton = document.getElementById("stop-screen");
+        const startVideoButton = document.getElementById("start-video");
+        const pauseVideoButton = document.getElementById("pause-video");
+        const resumeVideoButton = document.getElementById("resume-video");
+        const stopVideoButton = document.getElementById("stop-video");
+        const videoLink = document.getElementById("video-link");
+        const screenLink = document.getElementById("screen-link");
+
+        let videoStream, screenStream, videoRecorder, screenRecorder, videoSessionURL, screenSessionURL;
+
+        const constraints = {
             audio: true,
             video: true
         };
 
-        navigator.mediaDevices.getUserMedia(constraints).then((s) => {
-            stream = s;
-            video.srcObject = s;
+        // Initialize video stream
+        navigator.mediaDevices.getUserMedia(constraints).then((stream) => {
+            videoStream = stream;
+            video.srcObject = stream;
             video.play();
-            startButton.disabled = false;
+            startScreenButton.disabled = false;
+            startVideoButton.disabled = false;
         });
-        let sessionURL
-        const videoName = `video-${Date.now()}.webm`;
-        const loadurl = async () => {
+
+        const getResumableURL = async (fileName) => {
             const res = await fetch("https://europe-west3-testlify-376719.cloudfunctions.net/generateResumableUrl", {
                 method: "POST",
                 headers: {
                     "Content-Type": "application/json"
                 },
                 body: JSON.stringify({
-                    "fileName":videoName,"nearestRegion":"asia-south2"
+                    "fileName": fileName,
+                    "nearestRegion": "asia-south2"
                 })
             });
             const data = await res.json();
-            sessionURL = data.sessionUrl;
-        }
-        
-        document.getElementById("start").addEventListener("click", async () => {
-            const videoName = document.getElementById("VideoName").value
-            
-            console.log(sessionURL);
-            recorder = new ApiVideoMediaRecorder(stream, {
+            return data.sessionUrl;
+        };
+
+        const startRecording = async (stream, fileName, sessionURL, recorderVariable) => {
+            const recorder = new ApiVideoMediaRecorder(stream, {
                 uploadToken: "UPLOAD_TOKEN",
-                videoName: videoName,
+                videoName: fileName,
                 skipUploadToAPIVideo: true,
-                testlifyStorageSignedUrl: sessionURL,
+                testlifyStorageSignedUrl: sessionURL
             });
+            recorder.start({ timeslice: 1000 });
+            return recorder;
+        };
 
-            recorder.addEventListener("videoPlayable", (e) => console.log("Video playable,", e));
-            
-            recorder.start({
-                timeslice: 1000
-            });
-            
-            startButton.disabled = true;
-            stopButton.disabled = false;
+        // Start Screen Recording
+        startScreenButton.addEventListener("click", async () => {
+            const screenFileName = `screen-${Date.now()}.webm`;
+            screenSessionURL = await getResumableURL(screenFileName);
+
+            screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+            screenRecorder = await startRecording(screenStream, screenFileName, screenSessionURL);
+
+            startScreenButton.disabled = true;
+            stopScreenButton.disabled = false;
         });
 
-        document.getElementById("stop").addEventListener("click", () => {
-            startButton.disabled = false;
-            stopButton.disabled = true;
-            document.write("URL: ",`https://storage.googleapis.com/testlify-video-asia-south2/${videoName}` )
-            recorder.stop().then(v => console.log(v));
+        // Stop Screen Recording
+        stopScreenButton.addEventListener("click", () => {
+            screenRecorder.stop().then((payload) => {
+                // Extract media link from the payload
+                const mediaLink = payload.mediaLink;
+                screenStream.getTracks().forEach(track => track.stop()); // Stop all screen tracks
+                screenLink.innerHTML = `<a href="${mediaLink}" target="_blank">Download Screen Recording</a>`;
+            }).catch(e => console.error("Error stopping screen recording:", e));
+            stopScreenButton.disabled = true;
         });
-        loadurl();
+
+        // Start Video Recording
+        startVideoButton.addEventListener("click", async () => {
+            const videoFileName = document.getElementById("VideoName").value || `video-${Date.now()}.webm`;
+            videoSessionURL = await getResumableURL(videoFileName);
+
+            videoRecorder = await startRecording(videoStream, videoFileName, videoSessionURL);
+
+            startVideoButton.disabled = true;
+            pauseVideoButton.disabled = false;
+            stopVideoButton.disabled = false;
+        });
+
+        // Pause Video Recording
+        pauseVideoButton.addEventListener("click", () => {
+            videoRecorder.pause();
+            resumeVideoButton.disabled = false;
+            pauseVideoButton.disabled = true;
+        });
+
+        // Resume Video Recording
+        resumeVideoButton.addEventListener("click", () => {
+            videoRecorder.resume();
+            pauseVideoButton.disabled = false;
+            resumeVideoButton.disabled = true;
+        });
+
+        // Stop Video Recording
+        stopVideoButton.addEventListener("click", () => {
+            videoRecorder.stop().then((payload) => {
+                // Extract media link from the payload
+                const mediaLink = payload.mediaLink;
+                videoStream.getTracks().forEach(track => track.stop()); // Stop all video tracks
+                videoLink.innerHTML = `<a href="${mediaLink}" target="_blank">Download Video Recording</a>`;
+            }).catch(e => console.error("Error stopping video recording:", e));
+            stopVideoButton.disabled = true;
+            pauseVideoButton.disabled = true;
+            resumeVideoButton.disabled = true;
+        });
     </script>
 </body>
 

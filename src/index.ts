@@ -122,6 +122,12 @@ export class ApiVideoMediaRecorder {
           title: "No data available to upload",
         };
         this.onStopError(error);
+      } else if (this.onCustomUploadStopError) {
+        const error: VideoUploadError = {
+          raw: "No data available to upload",
+          title: "No data available to upload",
+        };
+        this.onCustomUploadStopError(error);
       }
       this.isRecording = false;
       // await this.uploadToTestlify();
@@ -142,41 +148,57 @@ export class ApiVideoMediaRecorder {
     this.eventTarget.addEventListener(type, callback, options);
   }
 
-  private async uploadChunk(chunk: Blob, startByte: number, endByte: number, totalSize: number | string): Promise<{ status: number, response: VideoUploadResponse | null }> {
+  private async uploadChunk(
+    chunk: Blob,
+    startByte: number,
+    endByte: number,
+    totalSize: number | string,
+    maxRetries: number = 10,
+    backoffFactor: number = 500
+  ): Promise<{ status: number; response: VideoUploadResponse | null }> {
     if (!this.testlifyStorageSignedUrl) {
       throw new Error("Testlify storage URL is required if upload to API Video is skipped");
     }
-
     const headers = {
       'Content-Length': chunk.size.toString(),
       'Content-Range': `bytes ${startByte}-${endByte - 1}/${totalSize}`,
     };
-
-    try {
-      const response = await fetch(this.testlifyStorageSignedUrl, {
-        method: 'PUT',
-        headers,
-        body: chunk,
-      });
-
-      if (response.ok) {
-        console.log(`Chunk uploaded successfully: bytes ${startByte}-${endByte - 1}`);
-        const videoUploadResponse: VideoUploadResponse = await response.json();
-        return { status: 200, response: videoUploadResponse };
-      } else if (response.status === 308) {
-        console.log(`Chunk accepted for upload (status 308): bytes ${startByte}-${endByte - 1}`);
-        return { status: 308, response: null };
-      } else {
-        const errorMsg = await response.text();
-        console.error(`Upload failed: ${response.status} - ${errorMsg}`);
-        throw new Error(`Upload failed: ${response.status}`);
+    let attempts = 0;
+    while (attempts <= maxRetries) {
+      try {
+        const response = await fetch(this.testlifyStorageSignedUrl, {
+          method: 'PUT',
+          headers,
+          body: chunk,
+        });
+        if (response.ok) {
+          console.log(`Chunk uploaded successfully: bytes ${startByte}-${endByte - 1}`);
+          const videoUploadResponse: VideoUploadResponse = await response.json();
+          return { status: 200, response: videoUploadResponse };
+        } else if (response.status === 308) {
+          console.log(`Chunk accepted for upload (status 308): bytes ${startByte}-${endByte - 1}`);
+          return { status: 308, response: null };
+        } else {
+          const errorMsg = await response.text();
+          console.error(`Upload failed: ${response.status} - ${errorMsg}`);
+          throw new Error(`Upload failed: ${response.status} - ${errorMsg}`);
+        }
+      } catch (error) {
+        attempts++;
+        if (attempts > maxRetries) {
+          console.error(`Upload failed after ${maxRetries} retries: ${error}`);
+          throw new Error(`Upload failed after ${maxRetries} retries: ${error}`);
+        }
+        const backoffTime = backoffFactor * Math.pow(2, attempts - 1);
+        console.warn(
+          `Attempt ${attempts} failed. Retrying after ${backoffTime}ms... Error: ${error}`
+        );
+        await new Promise((resolve) => setTimeout(resolve, backoffTime));
       }
-    } catch (error) {
-      console.error(`Upload failed with error: ${error}`);
-      throw error;
     }
+    // Should not reach here due to the retries
+    throw new Error("Unexpected error: Exceeded retry logic in uploadChunk");
   }
-
   private async handleUploads() {
     let totalSize: number | string = '*';
     let lastSuccessfulUpload: VideoUploadResponse | null = null;
