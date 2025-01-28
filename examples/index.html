@@ -61,7 +61,6 @@
             video: true
         };
 
-        // Initialize video stream
         navigator.mediaDevices.getUserMedia(constraints).then((stream) => {
             videoStream = stream;
             video.srcObject = stream;
