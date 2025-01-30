@@ -117,9 +117,9 @@ export class ApiVideoMediaRecorder {
             this.onVideoAvailable(video);
           }
         }
-      } else if (this.onStopError) {
+      } else if (!this.skipUploadToAPIVideo && this.onStopError) {
         const error: VideoUploadError = {
-          raw: "No data available to upload",
+          raw: "No data available to upload (api.video error)",
           title: "No data available to upload",
         };
         this.onStopError(error);
