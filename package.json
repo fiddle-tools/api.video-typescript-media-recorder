@@ -1,6 +1,6 @@
 {
   "name": "@fiddle-tools/media-recorder",
-  "version": "1.2.8",
+  "version": "1.2.9",
   "description": "api.video media recorder - upload video from your webcam with ease",
   "repository": {
     "type": "git",

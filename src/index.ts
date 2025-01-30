@@ -110,6 +110,14 @@ export class ApiVideoMediaRecorder {
     this.mediaRecorder.ondataavailable = (e) => this.onDataAvailable(e);
 
     this.mediaRecorder.onstop = async () => {
+      if (this.skipUploadToAPIVideo) {
+        this.isRecording = false;
+        if (this.buffer.length > 0) {
+          this.uploadQueue.push({ chunk: this.buffer, isFinal: true });
+          this.buffer = new Uint8Array(0);
+          this.processUploadQueue();
+        }
+      }
       if (this.previousPart) {
         if (!this.skipUploadToAPIVideo) {
           const video = await this.streamUpload.uploadLastPart(this.previousPart);
@@ -130,12 +138,7 @@ export class ApiVideoMediaRecorder {
         };
         this.onCustomUploadStopError(error);
       }
-      this.isRecording = false;
-      if (this.buffer.length > 0) {
-        this.uploadQueue.push({ chunk: this.buffer, isFinal: true });
-        this.buffer = new Uint8Array(0);
-        this.processUploadQueue();
-      }
+      
     };
     (window as any).mediaRecorder = this.mediaRecorder;
   }
