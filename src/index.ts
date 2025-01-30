@@ -138,7 +138,6 @@ export class ApiVideoMediaRecorder {
         };
         this.onCustomUploadStopError(error);
       }
-      
     };
     (window as any).mediaRecorder = this.mediaRecorder;
   }
