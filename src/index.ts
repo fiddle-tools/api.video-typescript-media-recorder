@@ -193,7 +193,7 @@ export class ApiVideoMediaRecorder {
 
     const chunkBlob = new Blob([chunk], { type: this.mimeType });
     const start = this.startByte;
-    const end = start + chunk.length - 1;
+    const end = Math.max(0, start + chunk.length - 1);
     const totalSize = isFinal ? (start + chunk.length) : '*';
 
     const headers = {
