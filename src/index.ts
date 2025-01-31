@@ -45,6 +45,7 @@ export class ApiVideoMediaRecorder {
   private previousPart: Blob | null = null;
   private testlifyStorageSignedUrl: string | undefined;
   private skipUploadToAPIVideo: boolean | undefined;
+  private hasReceivedData = false;
   private buffer: Uint8Array = new Uint8Array();
   private uploadQueue: { chunk: Uint8Array; isFinal: boolean }[] = [];
   private isProcessingQueue = false;
@@ -110,13 +111,22 @@ export class ApiVideoMediaRecorder {
     this.mediaRecorder.ondataavailable = (e) => this.onDataAvailable(e);
 
     this.mediaRecorder.onstop = async () => {
+      await new Promise(resolve => setTimeout(resolve, 100));
       if (this.skipUploadToAPIVideo) {
-        this.isRecording = false;
-        if (this.buffer.length > 0) {
+        if (this.buffer.length > 0 || this.hasReceivedData) {
           this.uploadQueue.push({ chunk: this.buffer, isFinal: true });
           this.buffer = new Uint8Array(0);
-          this.processUploadQueue();
+          await this.processUploadQueue();
+        } else {
+          if (this.onCustomUploadStopError) {
+            const error: VideoUploadError = {
+              raw: "No data available to upload",
+              title: "No data available to upload",
+            };
+            this.onCustomUploadStopError(error);
+          }
         }
+        return;
       }
       if (this.previousPart) {
         if (!this.skipUploadToAPIVideo) {
@@ -131,12 +141,6 @@ export class ApiVideoMediaRecorder {
           title: "No data available to upload",
         };
         this.onStopError(error);
-      } else if (this.onCustomUploadStopError) {
-        const error: VideoUploadError = {
-          raw: "No data available to upload",
-          title: "No data available to upload",
-        };
-        this.onCustomUploadStopError(error);
       }
     };
     (window as any).mediaRecorder = this.mediaRecorder;
@@ -245,21 +249,25 @@ export class ApiVideoMediaRecorder {
   private async onDataAvailable(ev: BlobEvent) {
     const isLast = (ev as any).currentTarget.state === "inactive";
     try {
+      if (ev.data && ev.data.size > 0) {
+        this.hasReceivedData = true;
+      }
+
       if (this.generateFileOnStop) {
         this.debugChunks.push(ev.data);
       }
 
-      if (this.skipUploadToAPIVideo) {
+      if (this.skipUploadToAPIVideo && ev.data.size > 0) {
         const arrayBuffer = await ev.data.arrayBuffer();
         const newChunk = new Uint8Array(arrayBuffer);
         this.buffer = this.mergeBuffers(this.buffer, newChunk);
 
         if (this.isRecording) {
           while (this.buffer.length >= this.MIN_CHUNK_SIZE) {
-            const maxChunkSize = 2 * this.MIN_CHUNK_SIZE
+            const maxChunkSize = 2 * this.MIN_CHUNK_SIZE;
             const availableChunkSize = Math.min(
               maxChunkSize,
-              this.buffer.length - (this.buffer.length % (this.MIN_CHUNK_SIZE))
+              this.buffer.length - (this.buffer.length % this.MIN_CHUNK_SIZE)
             );
 
             if (availableChunkSize === 0) break;
@@ -270,7 +278,7 @@ export class ApiVideoMediaRecorder {
           }
         }
 
-        this.processUploadQueue();
+        await this.processUploadQueue();
       }
 
       if (this.previousPart) {
@@ -300,6 +308,7 @@ export class ApiVideoMediaRecorder {
       throw new Error("MediaRecorder is already recording");
     }
     this.isRecording = true;
+    this.hasReceivedData = false;
     this.mediaRecorder.start(options?.timeslice || 5000);
   }
 
@@ -311,14 +320,14 @@ export class ApiVideoMediaRecorder {
     return new Promise((resolve, reject) => {
       if (this.getMediaRecorderState() === "inactive") {
         reject(new Error("MediaRecorder is already inactive"));
+        return;
       }
-      this.isRecording = false;
-      this.mediaRecorder.stop();
       this.onVideoAvailable = (v) => resolve(v);
       if (!this.skipUploadToAPIVideo) {
-        this.onStopError = (e) => reject(e)
+        this.onStopError = (e) => reject(e);
       }
-      this.onCustomUploadStopError = (e) => reject(e)
+      this.onCustomUploadStopError = (e) => reject(e);
+      this.mediaRecorder.stop();
     });
   }
 
