@@ -113,7 +113,7 @@ export class ApiVideoMediaRecorder {
     this.mediaRecorder.onstop = async () => {
       await new Promise(resolve => setTimeout(resolve, 100));
       if (this.skipUploadToAPIVideo) {
-        if (this.buffer.length > 0 || this.hasReceivedData) {
+        if (this.buffer.length > 0) {
           this.uploadQueue.push({ chunk: this.buffer, isFinal: true });
           this.buffer = new Uint8Array(0);
           await this.processUploadQueue();
@@ -249,10 +249,6 @@ export class ApiVideoMediaRecorder {
   private async onDataAvailable(ev: BlobEvent) {
     const isLast = (ev as any).currentTarget.state === "inactive";
     try {
-      if (ev.data && ev.data.size > 0) {
-        this.hasReceivedData = true;
-      }
-
       if (this.generateFileOnStop) {
         this.debugChunks.push(ev.data);
       }
@@ -308,7 +304,6 @@ export class ApiVideoMediaRecorder {
       throw new Error("MediaRecorder is already recording");
     }
     this.isRecording = true;
-    this.hasReceivedData = false;
     this.mediaRecorder.start(options?.timeslice || 5000);
   }
 
