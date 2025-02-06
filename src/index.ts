@@ -400,6 +400,19 @@ export class ApiVideoMediaRecorder {
     this.mediaRecorder.pause();
   }
 
+  public addEventListener(
+    type: EventType,
+    callback: EventListenerOrEventListenerObject | null,
+    options?: boolean | AddEventListenerOptions | undefined
+  ): void {
+    if (type === "videoPlayable") {
+      this.streamUpload.onPlayable((video) =>
+        this.dispatch("videoPlayable", video)
+      );
+    }
+    this.eventTarget.addEventListener(type, callback, options);
+  }
+
   public static getSupportedMimeTypes() {
     const VIDEO_TYPES = ["mp4", "webm", "ogg", "x-matroska"];
     const VIDEO_CODECS = [
