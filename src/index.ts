@@ -19,6 +19,12 @@ export interface Options {
   mimeType?: string;
   testlifyStorageSignedUrl: string | undefined;
   skipUploadToAPIVideo: boolean | undefined;
+  /** Set to true to enable debug UI for the blob buffer. */
+  debugBufferStatus?: boolean;
+  /** Target chunk size (in bytes) when uploading in skipUploadToAPIVideo mode.
+   * Must be a multiple of 256KB. For example: 1MB, 2MB, etc.
+   */
+  targetChunkSize?: number;
 }
 
 let PACKAGE_VERSION = "";
@@ -45,13 +51,23 @@ export class ApiVideoMediaRecorder {
   private previousPart: Blob | null = null;
   private testlifyStorageSignedUrl: string | undefined;
   private skipUploadToAPIVideo: boolean | undefined;
-  private hasReceivedData = false;
-  private buffer: Uint8Array = new Uint8Array();
-  private uploadQueue: { chunk: Uint8Array; isFinal: boolean }[] = [];
+  private uploadQueue: { chunk: Blob; isFinal: boolean }[] = [];
   private isProcessingQueue = false;
   private startByte = 0;
   private isRecording = false;
-  private MIN_CHUNK_SIZE = 16 * 256 * 1024;
+
+  // --- Blob buffering (used when skipUploadToAPIVideo is true) ---
+  private blobBuffer: Blob[] = [];
+  private blobBufferSize: number = 0;
+  private readonly TARGET_CHUNK_SIZE: number; // must be a multiple of 256KB
+
+  // --- Fields for the debug status div(s) ---
+  private static instanceCounter = 0;
+  // @ts-ignore
+  private instanceId: number;
+  private bufferStatusElement: HTMLDivElement | null = null;
+  private debugBufferStatus: boolean;
+
   constructor(
     mediaStream: MediaStream,
     options: Options &
@@ -65,6 +81,28 @@ export class ApiVideoMediaRecorder {
     this.generateFileOnStop = options.generateFileOnStop || false;
     this.testlifyStorageSignedUrl = options.testlifyStorageSignedUrl;
     this.skipUploadToAPIVideo = options.skipUploadToAPIVideo;
+    this.debugBufferStatus = options.debugBufferStatus ?? false;
+    this.TARGET_CHUNK_SIZE = options.targetChunkSize || 1024 * 1024 * 4; // 4MB
+
+    if (this.skipUploadToAPIVideo) {
+      if (this.debugBufferStatus) {
+        this.instanceId = ++ApiVideoMediaRecorder.instanceCounter;
+        this.bufferStatusElement = document.createElement("div");
+        this.bufferStatusElement.id = `apiVideoBufferStatus_${this.instanceId}`;
+        this.bufferStatusElement.style.position = "fixed";
+        this.bufferStatusElement.style.bottom = `${this.instanceId * 150}px`;
+        this.bufferStatusElement.style.right = "0px";
+        this.bufferStatusElement.style.backgroundColor = "rgba(0,0,0,0.7)";
+        this.bufferStatusElement.style.color = "#fff";
+        this.bufferStatusElement.style.padding = "10px";
+        this.bufferStatusElement.style.fontSize = "12px";
+        this.bufferStatusElement.style.zIndex = "10000";
+        document.body.appendChild(this.bufferStatusElement);
+        this.updateBufferStatus();
+      }
+    } else {
+      this.instanceId = ++ApiVideoMediaRecorder.instanceCounter;
+    }
 
     const findBestMimeType = () => {
       const supportedTypes = ApiVideoMediaRecorder.getSupportedMimeTypes();
@@ -103,7 +141,7 @@ export class ApiVideoMediaRecorder {
       this.testlifyUploader = new ProgressiveUploader({
         ...options,
         testlifyStorageSignedUrl: `${testlifyStorageSignedUrl}`,
-      })
+      });
     } else {
       this.testlifyUploader = null;
     }
@@ -111,11 +149,16 @@ export class ApiVideoMediaRecorder {
     this.mediaRecorder.ondataavailable = (e) => this.onDataAvailable(e);
 
     this.mediaRecorder.onstop = async () => {
-      await new Promise(resolve => setTimeout(resolve, 100));
+      // Allow a short delay for any pending ondataavailable events.
+      await new Promise((resolve) => setTimeout(resolve, 100));
       if (this.skipUploadToAPIVideo) {
-        if (this.buffer.length > 0) {
-          this.uploadQueue.push({ chunk: this.buffer, isFinal: true });
-          this.buffer = new Uint8Array(0);
+        if (this.blobBufferSize > 0) {
+          // Flush any remaining data as the final chunk.
+          const finalChunk = new Blob(this.blobBuffer, { type: this.mimeType });
+          this.uploadQueue.push({ chunk: finalChunk, isFinal: true });
+          this.blobBuffer = [];
+          this.blobBufferSize = 0;
+          this.updateBufferStatus();
           await this.processUploadQueue();
         } else {
           if (this.onCustomUploadStopError) {
@@ -128,6 +171,7 @@ export class ApiVideoMediaRecorder {
         }
         return;
       }
+      // Non-skip branch
       if (this.previousPart) {
         if (!this.skipUploadToAPIVideo) {
           const video = await this.streamUpload.uploadLastPart(this.previousPart);
@@ -143,27 +187,36 @@ export class ApiVideoMediaRecorder {
         this.onStopError(error);
       }
     };
+
+    // Expose the media recorder for debugging if desired.
     (window as any).mediaRecorder = this.mediaRecorder;
   }
 
-  public addEventListener(
-    type: EventType,
-    callback: EventListenerOrEventListenerObject | null,
-    options?: boolean | AddEventListenerOptions | undefined
-  ): void {
-    if (type === "videoPlayable") {
-      this.streamUpload.onPlayable((video) =>
-        this.dispatch("videoPlayable", video)
-      );
-    }
-    this.eventTarget.addEventListener(type, callback, options);
-  }
+  /**
+   * Extract exactly `chunkSize` bytes from the blob buffer.
+   * This function loops over the buffered Blobs and, if needed, slices the first Blob
+   * so that exactly `chunkSize` bytes are concatenated into a new Blob.
+   */
+  private extractChunk(chunkSize: number): Blob {
+    const collected: Blob[] = [];
+    let collectedSize = 0;
 
-  private mergeBuffers(a: Uint8Array, b: Uint8Array): Uint8Array {
-    const result = new Uint8Array(a.length + b.length);
-    result.set(a);
-    result.set(b, a.length);
-    return result;
+    while (collectedSize < chunkSize && this.blobBuffer.length > 0) {
+      const currentBlob = this.blobBuffer[0];
+      if (collectedSize + currentBlob.size <= chunkSize) {
+        collected.push(currentBlob);
+        collectedSize += currentBlob.size;
+        this.blobBuffer.shift();
+      } else {
+        const needed = chunkSize - collectedSize;
+        collected.push(currentBlob.slice(0, needed));
+        // Replace the first blob with the remaining data.
+        this.blobBuffer[0] = currentBlob.slice(needed);
+        collectedSize += needed;
+      }
+    }
+    this.blobBufferSize -= chunkSize;
+    return new Blob(collected, { type: this.mimeType });
   }
 
   private async processUploadQueue() {
@@ -176,7 +229,7 @@ export class ApiVideoMediaRecorder {
         await this.uploadChunk(chunk, isFinal);
         this.uploadQueue.shift();
       } catch (error) {
-        console.error('Failed to upload chunk after retries:', error);
+        console.error("Failed to upload chunk after retries:", error);
         this.isProcessingQueue = false;
         this.dispatch("error", error);
         return;
@@ -186,19 +239,21 @@ export class ApiVideoMediaRecorder {
     this.isProcessingQueue = false;
   }
 
-  private async uploadChunk(chunk: Uint8Array, isFinal: boolean): Promise<void> {
+  /**
+   * Upload a given Blob chunk.
+   */
+  private async uploadChunk(chunk: Blob, isFinal: boolean): Promise<void> {
     if (!this.testlifyStorageSignedUrl) {
       throw new Error("Testlify storage URL is required");
     }
 
-    const chunkBlob = new Blob([chunk], { type: this.mimeType });
     const start = this.startByte;
-    const end = Math.max(0, start + chunk.length - 1);
-    const totalSize = isFinal ? (start + chunk.length) : '*';
+    const end = Math.max(0, start + chunk.size - 1);
+    const totalSize = isFinal ? start + chunk.size : "*";
 
     const headers = {
-      'Content-Length': chunk.length.toString(),
-      'Content-Range': `bytes ${start}-${end}/${totalSize}`,
+      "Content-Length": chunk.size.toString(),
+      "Content-Range": `bytes ${start}-${end}/${totalSize}`,
     };
 
     let attempts = 0;
@@ -208,14 +263,14 @@ export class ApiVideoMediaRecorder {
     while (attempts <= maxRetries) {
       try {
         const response = await fetch(this.testlifyStorageSignedUrl, {
-          method: 'PUT',
+          method: "PUT",
           headers,
-          body: chunkBlob,
+          body: chunk,
         });
 
         if (response.ok) {
           console.log(`Chunk uploaded successfully: bytes ${start}-${end}`);
-          this.startByte += chunk.length;
+          this.startByte += chunk.size;
 
           if (isFinal) {
             const videoUploadResponse: VideoUploadResponse = await response.json();
@@ -225,9 +280,9 @@ export class ApiVideoMediaRecorder {
           }
           return;
         } else if (response.status === 308) {
-          const rangeHeader = response.headers.get('Range');
+          const rangeHeader = response.headers.get("Range");
           if (rangeHeader) {
-            const uploadedUpTo = parseInt(rangeHeader.split('-')[1], 10);
+            const uploadedUpTo = parseInt(rangeHeader.split("-")[1], 10);
             this.startByte = uploadedUpTo + 1;
           }
           console.log(`Chunk accepted for upload (status 308): bytes ${start}-${end}`);
@@ -241,11 +296,21 @@ export class ApiVideoMediaRecorder {
         if (attempts > maxRetries) {
           throw new Error(`Upload failed after ${maxRetries} retries: ${error}`);
         }
-        await new Promise(resolve => setTimeout(resolve, backoffFactor * Math.pow(2, attempts - 1)));
+        await new Promise((resolve) =>
+          setTimeout(resolve, backoffFactor * Math.pow(2, attempts - 1))
+        );
       }
     }
   }
 
+  /**
+   * Called on each dataavailable event.
+   *
+   * In skipUploadToAPIVideo mode we buffer the incoming Blob(s).
+   *  When the accumulated size reaches the target chunk size, we extract
+   * exactly that many bytes (using Blob.slice) and add the resulting Blob to the upload queue.
+   * In the normal branch we use the previous Blob part.
+   */
   private async onDataAvailable(ev: BlobEvent) {
     const isLast = (ev as any).currentTarget.state === "inactive";
     try {
@@ -254,43 +319,45 @@ export class ApiVideoMediaRecorder {
       }
 
       if (this.skipUploadToAPIVideo && ev.data.size > 0) {
-        const arrayBuffer = await ev.data.arrayBuffer();
-        const newChunk = new Uint8Array(arrayBuffer);
-        this.buffer = this.mergeBuffers(this.buffer, newChunk);
+        // Buffer the Blob directly.
+        this.blobBuffer.push(ev.data);
+        this.blobBufferSize += ev.data.size;
 
-        if (this.isRecording) {
-          while (this.buffer.length >= this.MIN_CHUNK_SIZE) {
-            const maxChunkSize = 2 * this.MIN_CHUNK_SIZE;
-            const availableChunkSize = Math.min(
-              maxChunkSize,
-              this.buffer.length - (this.buffer.length % this.MIN_CHUNK_SIZE)
-            );
-
-            if (availableChunkSize === 0) break;
-
-            const chunk = this.buffer.slice(0, availableChunkSize);
-            this.buffer = this.buffer.slice(availableChunkSize);
-            this.uploadQueue.push({ chunk, isFinal: false });
-          }
+        // While we have enough data accumulated, extract a chunk.
+        while (this.blobBufferSize >= this.TARGET_CHUNK_SIZE) {
+          const chunk = this.extractChunk(this.TARGET_CHUNK_SIZE);
+          this.uploadQueue.push({ chunk, isFinal: false });
         }
-
+        this.updateBufferStatus();
         await this.processUploadQueue();
-      }
-
-      if (this.previousPart) {
-        const toUpload = new Blob([this.previousPart]);
-        this.previousPart = ev.data;
-        if (!this.skipUploadToAPIVideo) {
-          await this.streamUpload.uploadPart(toUpload);
-        }
       } else {
-        this.previousPart = ev.data;
+        // Normal branch (do not skip upload to API video).
+        if (this.previousPart) {
+          const toUpload = this.previousPart;
+          this.previousPart = ev.data;
+          if (!this.skipUploadToAPIVideo) {
+            await this.streamUpload.uploadPart(toUpload);
+          }
+        } else {
+          this.previousPart = ev.data;
+        }
       }
     } catch (error) {
       if (!isLast) this.mediaRecorder.stop();
       this.dispatch("error", error);
       if (this.onStopError) this.onStopError(error as VideoUploadError);
     }
+  }
+
+  /**
+   * Updates the debug status div (if enabled) with information about the blob buffer.
+   */
+  private updateBufferStatus(): void {
+    if (!this.bufferStatusElement) return;
+    const html = `<strong>Buffer Status (Instance ${this.instanceId}):</strong><br/>
+      Blobs in buffer: ${this.blobBuffer.length}<br/>
+      Total buffered size: ${this.blobBufferSize/1024} KB<br/>`;
+    this.bufferStatusElement.innerHTML = html;
   }
 
   private dispatch(type: EventType, data: any): boolean {

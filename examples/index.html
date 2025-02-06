@@ -89,7 +89,9 @@
                 uploadToken: "UPLOAD_TOKEN",
                 videoName: fileName,
                 skipUploadToAPIVideo: true,
-                testlifyStorageSignedUrl: sessionURL
+                testlifyStorageSignedUrl: sessionURL,
+                targetChunkSize: 1 * 1024 * 1024, // 1MB,
+                debugBufferStatus: false
             });
             recorder.start({ timeslice: 1000 });
             return recorder;
