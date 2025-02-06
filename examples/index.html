@@ -89,7 +89,8 @@
                 uploadToken: "UPLOAD_TOKEN",
                 videoName: fileName,
                 skipUploadToAPIVideo: true,
-                testlifyStorageSignedUrl: sessionURL
+                testlifyStorageSignedUrl: sessionURL,
+                minChunkSize: 1 * 1024 * 1024, // 1MB
             });
             recorder.start({ timeslice: 1000 });
             return recorder;
@@ -100,7 +101,7 @@
             const screenFileName = `screen-${Date.now()}.webm`;
             screenSessionURL = await getResumableURL(screenFileName);
 
-            screenStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+            screenStream = await navigator.mediaDevices.getDisplayMedia({ audio: true });
             screenRecorder = await startRecording(screenStream, screenFileName, screenSessionURL);
 
             startScreenButton.disabled = true;
@@ -146,6 +147,7 @@
 
         // Stop Video Recording
         stopVideoButton.addEventListener("click", () => {
+            console.log("ApiVideoMediaRecorder state:", videoRecorder);
             videoRecorder.stop().then((payload) => {
                 // Extract media link from the payload
                 const mediaLink = payload.mediaLink;
@@ -156,6 +158,7 @@
             pauseVideoButton.disabled = true;
             resumeVideoButton.disabled = true;
         });
+        console.log("Supported mime-types:", ApiVideoMediaRecorder.getSupportedMimeTypes());
     </script>
 </body>
 
