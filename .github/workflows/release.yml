@@ -1,24 +1,111 @@
-name: Release package to github packages
+name: Release packages to GitHub Packages
+
 on:
-  release:
-    types: [published]
+  workflow_dispatch:
+
 permissions:
-  contents: read
+  contents: write
   packages: write
+  actions: write
+
 jobs:
-  deploy:
+  deploy-video-typescript-media-recorder:
     runs-on: ubuntu-latest
+    outputs:
+      VERSION: ${{ steps.version.outputs.VERSION }}
     steps:
-      - uses: actions/checkout@v2
-      - name: Append to npmrc
-        run: |
-          echo "//npm.pkg.github.com/:_authToken=$PACKAGES_UPLOAD_PAT" >> .npmrc
-        env:
-          PACKAGES_UPLOAD_PAT: ${{ secrets.PACKAGES_UPLOAD_PAT }}
-      - uses: actions/setup-node@v2
+      - name: Checkout repository
+        uses: actions/checkout@v3
         with:
+          repository: fiddle-tools/api.video-typescript-media-recorder
+          token: ${{ secrets.PACKAGES_UPLOAD_PAT }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 16
           registry-url: 'https://npm.pkg.github.com'
-      - run: npm install --no-save
-      - run: npm publish
+
+      - name: Install dependencies
+        run: npm install --no-save 
+
+      - name: Configure Git
+        run: |
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "github-actions"
+
+      - name: Auto Increment Version
+        id: version
+        run: |
+          NEW_VERSION=$(npm version patch -m "Bump version to %s [skip ci]" | sed 's/^v//')
+          echo "VERSION=$NEW_VERSION" >> $GITHUB_ENV
+          echo "VERSION=$NEW_VERSION" >> $GITHUB_OUTPUT
+          git push origin main --follow-tags
         env:
           NODE_AUTH_TOKEN: ${{ secrets.PACKAGES_UPLOAD_PAT }}
+          
+      - name: Create GitHub Release
+        uses: actions/create-release@v1
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        with:
+          tag_name: v${{ env.VERSION }}
+          release_name: Release v${{ env.VERSION }}
+          draft: false
+          prerelease: false
+
+      - name: Publish package
+        run: npm publish --registry=https://npm.pkg.github.com --access public
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.PACKAGES_UPLOAD_PAT }}
+
+  Update-video-typescript-media-recorder-Dependency-In-media-stream-composer:
+    needs: deploy-video-typescript-media-recorder
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v3
+        with:
+          repository: fiddle-tools/api.video-typescript-media-stream-composer
+          token: ${{ secrets.PACKAGES_UPLOAD_PAT }}
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v3
+        with:
+          node-version: 16
+          registry-url: 'https://npm.pkg.github.com'
+          scope: '@fiddle-tools'
+
+      - name: Authenticate npm
+        run: echo "//npm.pkg.github.com/:_authToken=${{ secrets.PACKAGES_UPLOAD_PAT }}" > ~/.npmrc
+
+      - name: Install dependencies
+        run: npm install --no-save
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.PACKAGES_UPLOAD_PAT }} 
+
+      - name: Configure Git
+        run: |
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "github-actions"
+      
+      - name: Update package.json with latest video-typescript-media-recorder version
+        run: |
+          jq --arg ver "${{ needs.deploy-video-typescript-media-recorder.outputs.VERSION }}" '.dependencies["@fiddle-tools/media-recorder"]=$ver' package.json > package.tmp.json
+          mv package.tmp.json package.json
+
+      - name: Commit and push updated package.json
+        run: |
+          git add package.json
+          git commit -m "chore: update video-typescript-media-recorder dependency to v${{ needs.deploy-video-typescript-media-recorder.outputs.VERSION }} [skip ci]"
+          git push origin main
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.PACKAGES_UPLOAD_PAT }}
+
+      - name: Trigger workflow in video-typescript-media-stream-compose repo
+        run: |
+          curl -X POST -H "Accept: application/vnd.github.v3+json" \
+            -H "Authorization: Bearer ${{ secrets.PACKAGES_UPLOAD_PAT }}" \
+            -H "Content-Type: application/json" \
+            https://api.github.com/repos/fiddle-tools/api.video-typescript-media-stream-composer/actions/workflows/release.yml/dispatches \
+            -d '{"ref": "main"}'
