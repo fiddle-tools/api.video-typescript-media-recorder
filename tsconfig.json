@@ -1,21 +1,18 @@
 {
     "compilerOptions": {
-        "target": "ES3",
-        "lib": ["ES2015", "dom"],
-        "outDir": "./dist",
-        "strict": true,
-        "skipLibCheck": true,
-        "forceConsistentCasingInFileNames": true,
-        "declaration": true,
-        "rootDirs": ["./src", "./test"],
-        "sourceMap": true,
-        "typeRoots": [
-            "./node_modules/@types",
-            "./src/types"
-        ]
+      "lib": ["ES2015", "dom"],
+      "outDir": "./dist",
+      "declaration": true,
+      "declarationDir": "./dist/types",
+      "declarationMap": true,
+      "rootDirs": ["./src", "./test"],
+      "sourceMap": true,
+      "typeRoots": [
+        "./node_modules/@types",
+        "./src/types"
+      ]
     },
-    "include": [
-        "src/**/*",
-        "src/upload-worker.js" 
-    ]
-}
+    "include": ["src/**/*"],
+    "exclude": ["node_modules", "dist"]
+  }
+  

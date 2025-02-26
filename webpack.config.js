@@ -1,5 +1,6 @@
 const webpack = require('webpack');
 const path = require('path');
+const CopyPlugin = require("copy-webpack-plugin");
 
 module.exports = {
     entry: {
@@ -33,6 +34,14 @@ module.exports = {
     plugins: [
         new webpack.DefinePlugin({
             __PACKAGE_VERSION__: JSON.stringify(require('./package.json').version),
+        }),
+        new CopyPlugin({
+            patterns: [
+                { 
+                    from: 'src/**/*.d.ts',
+                    to: 'types/[path]/[name][ext]'
+                }
+            ]
         })
     ]
 };
