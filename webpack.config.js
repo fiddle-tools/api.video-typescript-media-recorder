@@ -1,4 +1,5 @@
 const webpack = require('webpack');
+const path = require('path');
 
 module.exports = {
     entry: {
@@ -11,17 +12,24 @@ module.exports = {
                 use: 'ts-loader',
                 exclude: /node_modules/,
             },
+            {
+                test: /worker\.js$/,
+                use: 'raw-loader'
+            }
         ],
     },
     resolve: {
         extensions: ['.ts', '.js'],
+        alias: {
+            '@worker': path.resolve(__dirname, 'src/upload-worker.js')
+        }
     },
     output: {
         libraryTarget: 'umd',
         filename: 'index.js',
         globalObject: 'this'
     },
-    devtool: 'source-map', // Add this line to generate source maps
+    devtool: 'source-map',
     plugins: [
         new webpack.DefinePlugin({
             __PACKAGE_VERSION__: JSON.stringify(require('./package.json').version),
